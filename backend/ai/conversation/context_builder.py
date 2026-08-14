@@ -47,13 +47,6 @@ class ReplyContext:
         media_type:    Media type label (e.g. ``"Photo"``) or empty.
         text_preview:  First 200 characters of the message text.
         timestamp:     ISO string of the message timestamp, or empty.
-        is_ai_message:   True when the replied message is a known AI response.
-        ai_session_id:   Session ID that produced the AI message (when known).
-        ai_role:         Role of the AI message (``"assistant"``).
-        ai_content:      Full AI response text (untruncated when available).
-        ai_provider:     Provider that generated the AI message.
-        ai_model:        Model that generated the AI message.
-        ai_timestamp:    UTC ISO string when the AI message was registered.
     """
 
     exists: bool = False
@@ -65,13 +58,6 @@ class ReplyContext:
     media_type: str = ""
     text_preview: str = ""
     timestamp: str = ""
-    is_ai_message: bool = False
-    ai_session_id: str = ""
-    ai_role: str = ""
-    ai_content: str = ""
-    ai_provider: str = ""
-    ai_model: str = ""
-    ai_timestamp: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,31 +108,10 @@ class RuntimeContext:
 
 
 @dataclass(frozen=True)
-class PreferencesContext:
-    """Snapshot of the owner's AI preferences.
-
-    Attributes:
-        language:            Preferred language (e.g. ``"English"``).
-        personality:         Personality mode (e.g. ``"default"``).
-        response_style:      Response style (e.g. ``"concise"``).
-        custom_instructions: Extra system instructions, or empty.
-        auto_memory:         Whether auto-memory is enabled.
-        auto_tools:          Whether auto-tools are enabled.
-    """
-
-    language: str = "English"
-    personality: str = "default"
-    response_style: str = "concise"
-    custom_instructions: str = ""
-    auto_memory: bool = True
-    auto_tools: bool = True
-
-
-@dataclass(frozen=True)
 class ConversationContext:
     """The ONE immutable context object consumed by the Prompt Builder.
 
-    Assembled by ``ContextBuilder.build()`` from eight sources. The
+    Assembled by ``ContextBuilder.build()`` from six sources. The
     Prompt Builder receives this object and nothing else.
 
     Attributes:
@@ -169,8 +134,6 @@ class ConversationContext:
         settings:        Settings context (owner's bot settings snapshot).
         runtime:         Runtime context (AI state, counters).
         history:         Recent conversation history entries.
-        memory:          Memory text blocks from MemoryManager (permanent/long/short).
-        preferences:     AI preferences snapshot (language, personality, etc.).
         created_at:      UTC timestamp when this context was assembled.
     """
 
@@ -193,8 +156,6 @@ class ConversationContext:
     settings: SettingsContext
     runtime: RuntimeContext
     history: list[HistoryEntry]
-    memory: dict[str, str] = field(default_factory=dict)
-    preferences: PreferencesContext = field(default_factory=PreferencesContext)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -233,8 +194,6 @@ class ContextBuilder:
         settings: SettingsContext | None = None,
         runtime: RuntimeContext | None = None,
         history: list[HistoryEntry] | None = None,
-        memory: dict[str, str] | None = None,
-        preferences: PreferencesContext | None = None,
     ) -> ConversationContext:
         """Assemble an immutable ``ConversationContext``.
 
@@ -248,8 +207,6 @@ class ContextBuilder:
             settings:      Settings context (or None for empty).
             runtime:       Runtime context (or None for defaults).
             history:       Recent history entries (or None for empty).
-            memory:        Memory text blocks from MemoryManager (or None for empty).
-            preferences:   AI preferences snapshot (or None for defaults).
 
         Returns:
             A frozen ``ConversationContext`` ready for the Prompt Builder.
@@ -285,7 +242,5 @@ class ContextBuilder:
             settings=settings or SettingsContext(),
             runtime=runtime or RuntimeContext(),
             history=history or [],
-            memory=memory or {},
-            preferences=preferences or PreferencesContext(),
             created_at=now,
         )

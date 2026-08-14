@@ -145,8 +145,6 @@ class PromptBuilder:
         sections[PromptSection.SYSTEM_RULES] = SYSTEM_RULES_TEMPLATE
         sections[PromptSection.PLATFORM_CONSTRAINTS] = PLATFORM_CONSTRAINTS_TEMPLATE
         sections[PromptSection.RUNTIME_RULES] = RUNTIME_RULES_TEMPLATE
-        sections[PromptSection.MEMORY] = self._render_memory(ctx)
-        sections[PromptSection.PREFERENCES] = self._render_preferences(ctx)
         sections[PromptSection.CURRENT_CONTEXT] = self._render_current_context(ctx)
         sections[PromptSection.CONVERSATION_STATE] = self._render_conversation_state(ctx)
         sections[PromptSection.TOOL_METADATA] = self._render_tool_metadata(ctx)
@@ -157,64 +155,13 @@ class PromptBuilder:
         return sections
 
     def _merge_system(self, sections: dict[PromptSection, str]) -> str:
-        """Merge system-level sections into one string.
-
-        Includes system rules, platform constraints, runtime rules,
-        and preferences — all are system-level instructions that shape
-        the assistant's behavior.
-        """
+        """Merge the three system-level sections into one string."""
         parts = [
             sections.get(PromptSection.SYSTEM_RULES, ""),
             sections.get(PromptSection.PLATFORM_CONSTRAINTS, ""),
             sections.get(PromptSection.RUNTIME_RULES, ""),
-            sections.get(PromptSection.PREFERENCES, ""),
         ]
         return "\n\n".join(p for p in parts if p)
-
-    def _render_preferences(self, ctx: ConversationContext) -> str:
-        """Render the preferences block from PreferencesContext."""
-        p = ctx.preferences
-        lines: list[str] = ["[Preferences]"]
-        lines.append(f"Language: {p.language}")
-        lines.append(f"Personality: {p.personality}")
-        lines.append(f"Response Style: {p.response_style}")
-        lines.append(f"Auto-memory: {'enabled' if p.auto_memory else 'disabled'}")
-        lines.append(f"Auto-tools: {'enabled' if p.auto_tools else 'disabled'}")
-        if p.custom_instructions:
-            lines.append(f"Custom Instructions: {p.custom_instructions}")
-        return "\n".join(lines)
-
-    def _render_memory(self, ctx: ConversationContext) -> str:
-        """Render the memory block from MemoryManager output.
-
-        The memory dict contains up to three keys: ``permanent``,
-        ``long``, and ``short``. Each is a pre-formatted text block
-        (or empty string). We merge them into a single ``[Memory]``
-        section with sub-headers.
-        """
-        mem = ctx.memory
-        if not mem:
-            return ""
-        lines: list[str] = ["[Memory]"]
-        permanent = mem.get("permanent", "")
-        long_term = mem.get("long", "")
-        short = mem.get("short", "")
-        if permanent:
-            lines.append("[Permanent Facts]")
-            lines.append(permanent)
-        if long_term:
-            if lines[-1] != "[Memory]":
-                lines.append("")
-            lines.append("[Long-term Memory]")
-            lines.append(long_term)
-        if short:
-            if lines[-1] != "[Memory]":
-                lines.append("")
-            lines.append("[Short-term Memory]")
-            lines.append(short)
-        if len(lines) == 1:
-            return ""
-        return "\n".join(lines)
 
     def _render_current_context(self, ctx: ConversationContext) -> str:
         """Render the runtime/context block (§25.1 fields)."""
@@ -254,32 +201,16 @@ class PromptBuilder:
         lines.append(f"Flow: {ctx.current_flow or 'None'}")
 
         if ctx.reply.exists:
-            if ctx.reply.is_ai_message:
-                lines.append("[Reply to AI Message]")
-                lines.append(f"Message ID: {ctx.reply.message_id}")
-                lines.append(f"AI Session: {ctx.reply.ai_session_id or 'Unknown'}")
-                lines.append(f"AI Role: {ctx.reply.ai_role or 'assistant'}")
-                if ctx.reply.ai_provider:
-                    lines.append(f"AI Provider: {ctx.reply.ai_provider}")
-                if ctx.reply.ai_model:
-                    lines.append(f"AI Model: {ctx.reply.ai_model}")
-                if ctx.reply.ai_timestamp:
-                    lines.append(f"AI Timestamp: {ctx.reply.ai_timestamp}")
-                if ctx.reply.chat_title:
-                    lines.append(f"Chat: {ctx.reply.chat_title} ({ctx.reply.chat_id})")
-                lines.append("[AI Message Content]")
-                lines.append(ctx.reply.ai_content or "(empty)")
-            else:
-                lines.append("[Reply Context]")
-                lines.append(f"Message ID: {ctx.reply.message_id}")
-                lines.append(f"Sender: {ctx.reply.sender_name or 'Unknown'}")
-                lines.append(f"Chat: {ctx.reply.chat_title or 'Unknown'} ({ctx.reply.chat_id})")
-                if ctx.reply.media_type:
-                    lines.append(f"Media: {ctx.reply.media_type}")
-                if ctx.reply.text_preview:
-                    lines.append(f"Text: {ctx.reply.text_preview}")
-                if ctx.reply.timestamp:
-                    lines.append(f"Timestamp: {ctx.reply.timestamp}")
+            lines.append("[Reply Context]")
+            lines.append(f"Message ID: {ctx.reply.message_id}")
+            lines.append(f"Sender: {ctx.reply.sender_name or 'Unknown'}")
+            lines.append(f"Chat: {ctx.reply.chat_title or 'Unknown'} ({ctx.reply.chat_id})")
+            if ctx.reply.media_type:
+                lines.append(f"Media: {ctx.reply.media_type}")
+            if ctx.reply.text_preview:
+                lines.append(f"Text: {ctx.reply.text_preview}")
+            if ctx.reply.timestamp:
+                lines.append(f"Timestamp: {ctx.reply.timestamp}")
         else:
             lines.append("Reply: None")
 
@@ -355,8 +286,6 @@ class PromptBuilder:
                 settings=ctx.settings,
                 runtime=ctx.runtime,
                 history=history,
-                memory=ctx.memory,
-                preferences=ctx.preferences,
                 created_at=ctx.created_at,
             )
             sections[PromptSection.CONVERSATION_STATE] = self._render_conversation_state(trimmed_ctx)

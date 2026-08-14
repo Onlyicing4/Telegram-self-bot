@@ -23,19 +23,14 @@ import resource
 import time
 
 from backend.runtime.tracer import trace
-from backend.runtime.task_guard import immortal_create_task, guarded_create_task
-from backend.health import tick_loop, get_stale_loops
+from backend.runtime.task_guard import immortal_create_task
+from backend.health import get_loop_progress, get_stale_loops, tick_loop
 
 logger = logging.getLogger("backend.heartbeat")
 
 _INTERVAL = 30.0
 _STALL_THRESHOLD = 90.0
 _LOOP_STARVATION_MS = 5000.0
-_PERMANENT_TASK_NAMES = frozenset({
-    "lifeos-heartbeat", "lifeos-keepalive", "lifeos-failsafe",
-    "lifeos-diagnostics", "lifeos-memory-cleanup", "lifeos-run",
-    "lifeos-web", "lifeos-helper-watchdog",
-})
 _task: asyncio.Task | None = None
 
 _state_ref: dict = {
@@ -95,6 +90,7 @@ async def _heartbeat_loop() -> None:
         if loop_latency > _LOOP_STARVATION_MS:
             trace(
                 "EVENT_LOOP_STARVATION",
+                failure_class="event_loop_stall",
                 loop_latency_ms=f"{loop_latency:.1f}",
                 threshold_ms=f"{_LOOP_STARVATION_MS:.0f}",
             )
@@ -106,14 +102,9 @@ async def _heartbeat_loop() -> None:
 
         try:
             tasks = asyncio.all_tasks()
-            all_pending = [t for t in tasks if not t.done()]
-            pending = len(all_pending)
-            permanent_count = sum(
-                1 for t in all_pending if t.get_name() in _PERMANENT_TASK_NAMES
-            )
+            pending = sum(1 for t in tasks if not t.done())
         except Exception:
             pending = -1
-            permanent_count = -1
 
         try:
             usage = resource.getrusage(resource.RUSAGE_SELF)
@@ -146,13 +137,29 @@ async def _heartbeat_loop() -> None:
         last_command_age = f"{now - last_command:.0f}s" if last_command > 0 else "never"
         last_callback_age = f"{now - last_callback:.0f}s" if last_callback > 0 else "never"
 
+        stale_loops = get_stale_loops(_STALL_THRESHOLD)
+        diagnostics_progress = get_loop_progress("lifeos-diagnostics")
+        diagnostics_age = (
+            f"{now - diagnostics_progress['last_tick']:.0f}s"
+            if diagnostics_progress.get("last_tick") else "never"
+        )
+        if "lifeos-diagnostics" in stale_loops:
+            trace(
+                "DIAGNOSTICS_TASK_STALE",
+                failure_class="diagnostics_task_failure",
+                diagnostics_age=diagnostics_age,
+                threshold=f"{_STALL_THRESHOLD:.0f}s",
+            )
+            logger.error(
+                "DIAGNOSTICS_TASK_STALE — diagnostics loop has not reported progress for %s",
+                diagnostics_age,
+            )
+
         trace(
             "RUNTIME_HEARTBEAT",
             self_connected=_state_ref.get("self_connected", False),
             helper_connected=_state_ref.get("helper_connected", False),
             pending_tasks=pending,
-            permanent_tasks=permanent_count,
-            bounded_tasks=(pending - permanent_count) if pending >= 0 and permanent_count >= 0 else -1,
             loop_latency_ms=f"{loop_latency:.1f}",
             memory_mb=f"{mem_mb:.1f}",
             runtime_state=_state_ref.get("runtime_state", "unknown"),
@@ -165,6 +172,11 @@ async def _heartbeat_loop() -> None:
             last_rpc_age=last_rpc_age,
             last_command_age=last_command_age,
             last_callback_age=last_callback_age,
+            stale_loops=",".join(stale_loops) if stale_loops else "",
+            diagnostics_loop_age=diagnostics_age,
+            diagnostics_loop_status=(
+                "stale" if "lifeos-diagnostics" in stale_loops else "running"
+            ),
             **_ai_diag_snapshot(),
             **_recovery_state(),
         )
@@ -214,10 +226,7 @@ async def _heartbeat_loop() -> None:
                 )
                 sup = _supervisor_ref
                 if sup is not None and not sup._recovery_lock.locked():
-                    guarded_create_task(
-                        sup._trigger_reconnect(),
-                        name="lifeos-heartbeat-recovery",
-                    )
+                    immortal_create_task(lambda: sup._trigger_reconnect(), name="lifeos-heartbeat-recovery")
 
         if last_update > 0 and last_event > 0 and (now - last_event) > _STALL_THRESHOLD:
             if (now - last_update) < _STALL_THRESHOLD:
@@ -236,10 +245,7 @@ async def _heartbeat_loop() -> None:
                 )
                 sup = _supervisor_ref
                 if sup is not None and not sup._recovery_lock.locked():
-                    guarded_create_task(
-                        sup._trigger_reconnect(),
-                        name="lifeos-heartbeat-recovery",
-                    )
+                    immortal_create_task(lambda: sup._trigger_reconnect(), name="lifeos-heartbeat-recovery")
 
         if last_callback > 0 and (now - last_callback) > _STALL_THRESHOLD:
             if rpc_healthy:
@@ -256,10 +262,7 @@ async def _heartbeat_loop() -> None:
                 )
                 sup = _supervisor_ref
                 if sup is not None and not sup._recovery_lock.locked():
-                    guarded_create_task(
-                        sup._trigger_reconnect(),
-                        name="lifeos-heartbeat-recovery",
-                    )
+                    immortal_create_task(lambda: sup._trigger_reconnect(), name="lifeos-heartbeat-recovery")
 
 
 def _ai_diag_snapshot() -> dict:
